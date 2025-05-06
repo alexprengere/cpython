@@ -2854,7 +2854,12 @@ add_ast_annotations(struct ast_state *state)
     if (!DictComp_annotations) return 0;
     {
         PyObject *type = state->expr_type;
-        Py_INCREF(type);
+        type = _Py_union_type_or(type, Py_None);
+        cond = type != NULL;
+        if (!cond) {
+            Py_DECREF(DictComp_annotations);
+            return 0;
+        }
         cond = PyDict_SetItemString(DictComp_annotations, "key", type) == 0;
         Py_DECREF(type);
         if (!cond) {
@@ -6392,7 +6397,7 @@ init_types(void *arg)
         "     | Set(expr* elts)\n"
         "     | ListComp(expr elt, comprehension* generators)\n"
         "     | SetComp(expr elt, comprehension* generators)\n"
-        "     | DictComp(expr key, expr value, comprehension* generators)\n"
+        "     | DictComp(expr? key, expr value, comprehension* generators)\n"
         "     | GeneratorExp(expr elt, comprehension* generators)\n"
         "     | Await(expr value)\n"
         "     | Yield(expr? value)\n"
@@ -6460,8 +6465,10 @@ init_types(void *arg)
     if (!state->SetComp_type) return -1;
     state->DictComp_type = make_type(state, "DictComp", state->expr_type,
                                      DictComp_fields, 3,
-        "DictComp(expr key, expr value, comprehension* generators)");
+        "DictComp(expr? key, expr value, comprehension* generators)");
     if (!state->DictComp_type) return -1;
+    if (PyObject_SetAttr(state->DictComp_type, state->key, Py_None) == -1)
+        return -1;
     state->GeneratorExp_type = make_type(state, "GeneratorExp",
                                          state->expr_type, GeneratorExp_fields,
                                          2,
@@ -8002,11 +8009,6 @@ _PyAST_DictComp(expr_ty key, expr_ty value, asdl_comprehension_seq *
                 end_col_offset, PyArena *arena)
 {
     expr_ty p;
-    if (!key) {
-        PyErr_SetString(PyExc_ValueError,
-                        "field 'key' is required for DictComp");
-        return NULL;
-    }
     if (!value) {
         PyErr_SetString(PyExc_ValueError,
                         "field 'value' is required for DictComp");
@@ -14509,9 +14511,9 @@ obj2ast_expr(struct ast_state *state, PyObject* obj, expr_ty* out, PyArena*
         if (PyObject_GetOptionalAttr(obj, state->key, &tmp) < 0) {
             return -1;
         }
-        if (tmp == NULL) {
-            PyErr_SetString(PyExc_TypeError, "required field \"key\" missing from DictComp");
-            return -1;
+        if (tmp == NULL || tmp == Py_None) {
+            Py_CLEAR(tmp);
+            key = NULL;
         }
         else {
             int res;

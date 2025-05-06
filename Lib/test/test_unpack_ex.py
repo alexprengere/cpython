@@ -149,29 +149,19 @@ List comprehension element unpacking
 
     >>> l = [a, (3, 4), {5}, {6: None}, (i for i in range(7, 10))]
     >>> [*item for item in l]
-    Traceback (most recent call last):
-    ...
-    SyntaxError: iterable unpacking cannot be used in comprehension
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 
     >>> [*[0, 1] for i in range(10)]
-    Traceback (most recent call last):
-    ...
-    SyntaxError: iterable unpacking cannot be used in comprehension
+    [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]
 
     >>> [*'a' for i in range(10)]
-    Traceback (most recent call last):
-    ...
-    SyntaxError: iterable unpacking cannot be used in comprehension
+    ['a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a']
 
     >>> [*[] for i in range(10)]
-    Traceback (most recent call last):
-    ...
-    SyntaxError: iterable unpacking cannot be used in comprehension
+    []
 
     >>> {**{} for a in [1]}
-    Traceback (most recent call last):
-    ...
-    SyntaxError: dict unpacking cannot be used in dict comprehension
+    {}
 
 # Pegen is better here.
 # Generator expression in function arguments

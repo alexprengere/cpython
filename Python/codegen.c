@@ -4469,35 +4469,69 @@ codegen_sync_comprehension_generator(compiler *c, location loc,
                                             elt, val, type, 0));
     }
 
-    location elt_loc = LOC(elt);
+    location elt_loc;
+    if (elt != NULL) {
+        elt_loc = LOC(elt);
+    } else {
+        /* If elt is NULL, we are in a DictComp, and the value is
+           the key-value pair. */
+        elt_loc = LOCATION(val->lineno,
+                           val->end_lineno,
+                           val->col_offset,
+                           val->end_col_offset);
+    }
 
     /* only append after the last for generator */
     if (gen_index >= asdl_seq_LEN(generators)) {
         /* comprehension specific code */
         switch (type) {
         case COMP_GENEXP:
-            VISIT(c, expr, elt);
-            ADDOP_YIELD(c, elt_loc);
-            ADDOP(c, elt_loc, POP_TOP);
+            if (elt->kind == Starred_kind) {
+                VISIT(c, expr, elt->v.Starred.value);
+                ADDOP(c, elt_loc, GET_YIELD_FROM_ITER);
+                ADDOP_LOAD_CONST(c, elt_loc, Py_None);
+                ADD_YIELD_FROM(c, elt_loc, 0);
+                ADDOP(c, elt_loc, POP_TOP);
+            } else {
+                VISIT(c, expr, elt);
+                ADDOP_YIELD(c, elt_loc);
+                ADDOP(c, elt_loc, POP_TOP);
+            }
             break;
         case COMP_LISTCOMP:
-            VISIT(c, expr, elt);
-            ADDOP_I(c, elt_loc, LIST_APPEND, depth + 1);
+            if (elt->kind == Starred_kind) {
+                VISIT(c, expr, elt->v.Starred.value);
+                ADDOP_I(c, elt_loc, LIST_EXTEND, depth + 1);
+            } else {
+                VISIT(c, expr, elt);
+                ADDOP_I(c, elt_loc, LIST_APPEND, depth + 1);
+            }
             break;
         case COMP_SETCOMP:
-            VISIT(c, expr, elt);
-            ADDOP_I(c, elt_loc, SET_ADD, depth + 1);
+            if (elt->kind == Starred_kind) {
+                VISIT(c, expr, elt->v.Starred.value);
+                ADDOP_I(c, elt_loc, SET_UPDATE, depth + 1);
+            } else {
+                VISIT(c, expr, elt);
+                ADDOP_I(c, elt_loc, SET_ADD, depth + 1);
+            }
             break;
         case COMP_DICTCOMP:
-            /* With '{k: v}', k is evaluated before v, so we do
-               the same. */
-            VISIT(c, expr, elt);
-            VISIT(c, expr, val);
-            elt_loc = LOCATION(elt->lineno,
-                               val->end_lineno,
-                               elt->col_offset,
-                               val->end_col_offset);
-            ADDOP_I(c, elt_loc, MAP_ADD, depth + 1);
+            if (elt == NULL) {
+                VISIT(c, expr, val);
+                ADDOP_I(c, elt_loc, DICT_UPDATE, depth + 1);
+
+            } else {
+                /* With '{k: v}', k is evaluated before v, so we do
+                   the same. */
+                VISIT(c, expr, elt);
+                VISIT(c, expr, val);
+                elt_loc = LOCATION(elt->lineno,
+                                   val->end_lineno,
+                                   elt->col_offset,
+                                   val->end_col_offset);
+                ADDOP_I(c, elt_loc, MAP_ADD, depth + 1);
+            }
             break;
         default:
             return ERROR;
@@ -4575,34 +4609,68 @@ codegen_async_comprehension_generator(compiler *c, location loc,
                                             elt, val, type, 0));
     }
 
-    location elt_loc = LOC(elt);
+    location elt_loc;
+    if (elt != NULL) {
+        elt_loc = LOC(elt);
+    } else {
+        /* If elt is NULL, we are in a DictComp, and the value is
+           the key-value pair. */
+        elt_loc = LOCATION(val->lineno,
+                           val->end_lineno,
+                           val->col_offset,
+                           val->end_col_offset);
+    }
+
     /* only append after the last for generator */
     if (gen_index >= asdl_seq_LEN(generators)) {
         /* comprehension specific code */
         switch (type) {
         case COMP_GENEXP:
-            VISIT(c, expr, elt);
-            ADDOP_YIELD(c, elt_loc);
-            ADDOP(c, elt_loc, POP_TOP);
+            if (elt->kind == Starred_kind) {
+                VISIT(c, expr, elt->v.Starred.value);
+                ADDOP(c, elt_loc, GET_YIELD_FROM_ITER);
+                ADDOP_LOAD_CONST(c, elt_loc, Py_None);
+                ADD_YIELD_FROM(c, elt_loc, 0);
+                ADDOP(c, elt_loc, POP_TOP);
+            } else {
+                VISIT(c, expr, elt);
+                ADDOP_YIELD(c, elt_loc);
+                ADDOP(c, elt_loc, POP_TOP);
+            }
             break;
         case COMP_LISTCOMP:
-            VISIT(c, expr, elt);
-            ADDOP_I(c, elt_loc, LIST_APPEND, depth + 1);
+            if (elt->kind == Starred_kind) {
+                VISIT(c, expr, elt->v.Starred.value);
+                ADDOP_I(c, elt_loc, LIST_EXTEND, depth + 1);
+            } else {
+                VISIT(c, expr, elt);
+                ADDOP_I(c, elt_loc, LIST_APPEND, depth + 1);
+            }
             break;
         case COMP_SETCOMP:
-            VISIT(c, expr, elt);
-            ADDOP_I(c, elt_loc, SET_ADD, depth + 1);
+            if (elt->kind == Starred_kind) {
+                VISIT(c, expr, elt->v.Starred.value);
+                ADDOP_I(c, elt_loc, SET_UPDATE, depth + 1);
+            } else {
+                VISIT(c, expr, elt);
+                ADDOP_I(c, elt_loc, SET_ADD, depth + 1);
+            }
             break;
         case COMP_DICTCOMP:
-            /* With '{k: v}', k is evaluated before v, so we do
-               the same. */
-            VISIT(c, expr, elt);
-            VISIT(c, expr, val);
-            elt_loc = LOCATION(elt->lineno,
-                               val->end_lineno,
-                               elt->col_offset,
-                               val->end_col_offset);
-            ADDOP_I(c, elt_loc, MAP_ADD, depth + 1);
+            if (elt == NULL) {
+                VISIT(c, expr, val);
+                ADDOP_I(c, elt_loc, DICT_UPDATE, depth + 1);
+            } else {
+                /* With '{k: v}', k is evaluated before v, so we do
+                   the same. */
+                VISIT(c, expr, elt);
+                VISIT(c, expr, val);
+                elt_loc = LOCATION(elt->lineno,
+                                   val->end_lineno,
+                                   elt->col_offset,
+                                   val->end_col_offset);
+                ADDOP_I(c, elt_loc, MAP_ADD, depth + 1);
+            }
             break;
         default:
             return ERROR;
@@ -5307,6 +5375,7 @@ codegen_visit_expr(compiler *c, expr_ty e)
         default:
             return _PyCompile_Error(c, loc,
                 "can't use starred expression here");
+
         }
         break;
     case Slice_kind:

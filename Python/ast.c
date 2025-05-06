@@ -304,9 +304,28 @@ validate_expr(expr_ty exp, expr_context_ty ctx)
     COMP(GeneratorExp)
 #undef COMP
     case DictComp_kind:
+        /*
         ret = validate_comprehension(exp->v.DictComp.generators) &&
             validate_expr(exp->v.DictComp.key, Load) &&
-            validate_expr(exp->v.DictComp.value, Load);
+            validate_expr(exp->v.DictComp.value, Load); */
+
+        /* {**d for d in ...}: key may be NULL */
+        if (!validate_comprehension(exp->v.DictComp.generators)) {
+            ret = 0;
+        }
+        else {
+            ret = 1;
+            /* only validate a real key→value pair */
+            if (exp->v.DictComp.key) {
+                if (!validate_expr(exp->v.DictComp.key, Load)) {
+                    ret = 0;
+                }
+            }
+            /* always validate the value (the dict to unpack) */
+            if (ret) {
+                ret = validate_expr(exp->v.DictComp.value, Load);
+            }
+        }
         break;
     case Yield_kind:
         ret = !exp->v.Yield.value || validate_expr(exp->v.Yield.value, Load);
