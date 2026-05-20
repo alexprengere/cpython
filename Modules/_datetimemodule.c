@@ -3025,6 +3025,380 @@ delta_total_seconds(PyObject *op, PyObject *Py_UNUSED(dummy))
 }
 
 static PyObject *
+parse_isoformat_timedelta_number(const char *p, Py_ssize_t len)
+{
+    PyObject *num_str = PyUnicode_FromStringAndSize(p, len);
+    if (num_str == NULL) {
+        return NULL;
+    }
+
+    PyObject *num = PyLong_FromUnicodeObject(num_str, 10);
+    Py_DECREF(num_str);
+    return num;
+}
+
+static int
+add_scaled_component(PyObject **target, PyObject *value, int scale)
+{
+    PyObject *scale_obj = PyLong_FromLong(scale);
+    if (scale_obj == NULL) {
+        return -1;
+    }
+
+    PyObject *scaled = PyNumber_Multiply(value, scale_obj);
+    Py_DECREF(scale_obj);
+    if (scaled == NULL) {
+        return -1;
+    }
+
+    PyObject *new_total = PyNumber_Add(*target, scaled);
+    Py_DECREF(scaled);
+    if (new_total == NULL) {
+        return -1;
+    }
+
+    Py_SETREF(*target, new_total);
+    return 0;
+}
+
+static int
+parse_isoformat_timedelta(const char *p, Py_ssize_t len,
+                          PyObject **days_out, PyObject **seconds_out,
+                          PyObject **microseconds_out)
+{
+    if (len == 0) {
+        return -1;
+    }
+
+    int sign = 1;
+    if (*p == '+' || *p == '-') {
+        sign = (*p == '-') ? -1 : 1;
+        p++;
+        len--;
+    }
+
+    if (len < 2 || *p != 'P') {
+        return -1;
+    }
+    p++;
+    len--;
+
+    PyObject *days = PyLong_FromLong(0);
+    PyObject *seconds = PyLong_FromLong(0);
+    PyObject *microseconds = PyLong_FromLong(0);
+    if (days == NULL || seconds == NULL || microseconds == NULL) {
+        Py_XDECREF(days);
+        Py_XDECREF(seconds);
+        Py_XDECREF(microseconds);
+        return -2;
+    }
+
+    int in_time = 0;
+    int saw_component = 0;
+    int saw_time_component = 0;
+    int saw_weeks = 0;
+    int last_rank = -1;
+    unsigned int seen_units = 0;
+
+    while (len > 0) {
+        if (*p == 'T') {
+            if (in_time || saw_weeks || len == 1) {
+                goto invalid;
+            }
+            in_time = 1;
+            p++;
+            len--;
+            continue;
+        }
+
+        if (*p < '0' || *p > '9') {
+            goto invalid;
+        }
+
+        const char *num_start = p;
+        Py_ssize_t num_len = 0;
+        while (num_len < len && p[num_len] >= '0' && p[num_len] <= '9') {
+            num_len++;
+        }
+        p += num_len;
+        len -= num_len;
+
+        const char *fraction_start = NULL;
+        Py_ssize_t fraction_len = 0;
+        if (len > 0 && (*p == '.' || *p == ',')) {
+            p++;
+            len--;
+            fraction_start = p;
+            while (fraction_len < len && p[fraction_len] >= '0' && p[fraction_len] <= '9') {
+                fraction_len++;
+            }
+            if (fraction_len == 0) {
+                goto invalid;
+            }
+            p += fraction_len;
+            len -= fraction_len;
+        }
+
+        if (len == 0) {
+            goto invalid;
+        }
+
+        char designator = *p++;
+        len--;
+        unsigned int unit_bit;
+        int rank;
+        switch (designator) {
+            case 'W': unit_bit = 1U << 0; rank = 0; break;
+            case 'D': unit_bit = 1U << 1; rank = 1; break;
+            case 'H': unit_bit = 1U << 2; rank = 2; break;
+            case 'M': unit_bit = 1U << 3; rank = 3; break;
+            case 'S': unit_bit = 1U << 4; rank = 4; break;
+            default: goto invalid;
+        }
+
+        if ((seen_units & unit_bit) || rank <= last_rank) {
+            goto invalid;
+        }
+        seen_units |= unit_bit;
+        last_rank = rank;
+
+        PyObject *value = parse_isoformat_timedelta_number(num_start, num_len);
+        if (value == NULL) {
+            goto malformed_error;
+        }
+
+        if (designator == 'W') {
+            if (in_time || saw_component || fraction_start != NULL || len != 0) {
+                Py_DECREF(value);
+                goto invalid;
+            }
+            saw_weeks = 1;
+            if (add_scaled_component(&days, value, 7) < 0) {
+                Py_DECREF(value);
+                goto malformed_error;
+            }
+        }
+        else if (designator == 'D') {
+            if (in_time || fraction_start != NULL || saw_weeks) {
+                Py_DECREF(value);
+                goto invalid;
+            }
+            if (add_scaled_component(&days, value, 1) < 0) {
+                Py_DECREF(value);
+                goto malformed_error;
+            }
+        }
+        else if (designator == 'H') {
+            if (!in_time || fraction_start != NULL) {
+                Py_DECREF(value);
+                goto invalid;
+            }
+            saw_time_component = 1;
+            if (add_scaled_component(&seconds, value, 3600) < 0) {
+                Py_DECREF(value);
+                goto malformed_error;
+            }
+        }
+        else if (designator == 'M') {
+            if (!in_time || fraction_start != NULL) {
+                Py_DECREF(value);
+                goto invalid;
+            }
+            saw_time_component = 1;
+            if (add_scaled_component(&seconds, value, 60) < 0) {
+                Py_DECREF(value);
+                goto malformed_error;
+            }
+        }
+        else {
+            if (!in_time) {
+                Py_DECREF(value);
+                goto invalid;
+            }
+            saw_time_component = 1;
+            if (add_scaled_component(&seconds, value, 1) < 0) {
+                Py_DECREF(value);
+                goto malformed_error;
+            }
+            if (fraction_start != NULL) {
+                if (fraction_len > 6) {
+                    Py_DECREF(value);
+                    goto invalid;
+                }
+                int usec = 0;
+                for (Py_ssize_t i = 0; i < fraction_len; ++i) {
+                    usec = usec * 10 + (fraction_start[i] - '0');
+                }
+                for (Py_ssize_t i = fraction_len; i < 6; ++i) {
+                    usec *= 10;
+                }
+
+                PyObject *usec_obj = PyLong_FromLong(usec);
+                if (usec_obj == NULL) {
+                    Py_DECREF(value);
+                    goto malformed_error;
+                }
+                Py_SETREF(microseconds, usec_obj);
+            }
+        }
+
+        Py_DECREF(value);
+        saw_component = 1;
+    }
+
+    if (!saw_component || (in_time && !saw_time_component)) {
+        goto invalid;
+    }
+
+    if (sign < 0) {
+        PyObject *tmp = PyNumber_Negative(days);
+        if (tmp == NULL) {
+            goto malformed_error;
+        }
+        Py_SETREF(days, tmp);
+
+        tmp = PyNumber_Negative(seconds);
+        if (tmp == NULL) {
+            goto malformed_error;
+        }
+        Py_SETREF(seconds, tmp);
+
+        tmp = PyNumber_Negative(microseconds);
+        if (tmp == NULL) {
+            goto malformed_error;
+        }
+        Py_SETREF(microseconds, tmp);
+    }
+
+    *days_out = days;
+    *seconds_out = seconds;
+    *microseconds_out = microseconds;
+    return 0;
+
+invalid:
+    Py_DECREF(days);
+    Py_DECREF(seconds);
+    Py_DECREF(microseconds);
+    return -1;
+
+malformed_error:
+    Py_DECREF(days);
+    Py_DECREF(seconds);
+    Py_DECREF(microseconds);
+    return -2;
+}
+
+PyDoc_STRVAR(delta_isoformat__doc__,
+"Return a string representing the duration in ISO 8601 format.");
+
+static PyObject *
+delta_isoformat(PyObject *op, PyObject *Py_UNUSED(dummy))
+{
+    PyObject *abs_delta = op;
+    int negative = GET_TD_DAYS(op) < 0;
+    if (negative) {
+        abs_delta = delta_negative(op);
+        if (abs_delta == NULL) {
+            return NULL;
+        }
+    }
+    else {
+        Py_INCREF(abs_delta);
+    }
+
+    int days = GET_TD_DAYS(abs_delta);
+    int total_seconds = GET_TD_SECONDS(abs_delta);
+    int microseconds = GET_TD_MICROSECONDS(abs_delta);
+    Py_DECREF(abs_delta);
+
+    int minutes = divmod(total_seconds, 60, &total_seconds);
+    int hours = divmod(minutes, 60, &minutes);
+    int seconds = total_seconds;
+
+    char buf[80];
+    char *ptr = buf;
+    char *end = buf + sizeof(buf);
+
+    if (negative) {
+        *ptr++ = '-';
+    }
+    *ptr++ = 'P';
+
+    if (days) {
+        ptr += PyOS_snprintf(ptr, (Py_ssize_t)(end - ptr), "%dD", days);
+    }
+
+    int has_time = hours || minutes || seconds || microseconds || !days;
+    if (has_time) {
+        *ptr++ = 'T';
+        if (hours) {
+            ptr += PyOS_snprintf(ptr, (Py_ssize_t)(end - ptr), "%dH", hours);
+        }
+        if (minutes) {
+            ptr += PyOS_snprintf(ptr, (Py_ssize_t)(end - ptr), "%dM", minutes);
+        }
+        if (microseconds) {
+            char fraction[7];
+            PyOS_snprintf(fraction, sizeof(fraction), "%06d", microseconds);
+            int frac_len = 6;
+            while (frac_len > 0 && fraction[frac_len - 1] == '0') {
+                frac_len--;
+            }
+            ptr += PyOS_snprintf(ptr, (Py_ssize_t)(end - ptr), "%d.%.*sS",
+                                 seconds, frac_len, fraction);
+        }
+        else if (seconds || (!hours && !minutes)) {
+            ptr += PyOS_snprintf(ptr, (Py_ssize_t)(end - ptr), "%dS", seconds);
+        }
+    }
+
+    return PyUnicode_FromStringAndSize(buf, ptr - buf);
+}
+
+PyDoc_STRVAR(delta_fromisoformat__doc__,
+"Construct a timedelta from a string in ISO 8601 duration format.");
+
+static PyObject *
+delta_fromisoformat(PyObject *cls, PyObject *string)
+{
+    if (!PyUnicode_Check(string)) {
+        PyErr_SetString(PyExc_TypeError, "fromisoformat: argument must be str");
+        return NULL;
+    }
+
+    Py_ssize_t len;
+    const char *p = PyUnicode_AsUTF8AndSize(string, &len);
+    if (p == NULL) {
+        if (PyErr_ExceptionMatches(PyExc_UnicodeEncodeError)) {
+            goto invalid_string_error;
+        }
+        return NULL;
+    }
+
+    PyObject *days = NULL;
+    PyObject *seconds = NULL;
+    PyObject *microseconds = NULL;
+    int rv = parse_isoformat_timedelta(p, len, &days, &seconds, &microseconds);
+    if (rv == -1) {
+        goto invalid_string_error;
+    }
+    if (rv < 0) {
+        return NULL;
+    }
+
+    PyObject *delta = PyObject_CallFunctionObjArgs(cls, days, seconds,
+                                                   microseconds, NULL);
+    Py_DECREF(days);
+    Py_DECREF(seconds);
+    Py_DECREF(microseconds);
+    return delta;
+
+invalid_string_error:
+    PyErr_Format(PyExc_ValueError, "Invalid isoformat string: %R", string);
+    return NULL;
+}
+
+static PyObject *
 delta_reduce(PyObject *op, PyObject *Py_UNUSED(dummy))
 {
     PyDateTime_Delta *self = PyDelta_CAST(op);
@@ -3047,6 +3421,9 @@ static PyMemberDef delta_members[] = {
 };
 
 static PyMethodDef delta_methods[] = {
+    {"isoformat", delta_isoformat, METH_NOARGS, delta_isoformat__doc__},
+    {"fromisoformat", delta_fromisoformat, METH_O | METH_CLASS,
+     delta_fromisoformat__doc__},
     {"total_seconds", delta_total_seconds, METH_NOARGS,
      PyDoc_STR("Total seconds in the duration.")},
 

@@ -679,6 +679,79 @@ class TestTimeDelta(HarmlessMixedComparison, unittest.TestCase):
             td = timedelta(microseconds=ms)
             self.assertEqual(td.total_seconds(), td / timedelta(seconds=1))
 
+    def test_isoformat(self):
+        td = self.theclass
+
+        cases = [
+            (td(), "PT0S"),
+            (td(days=12, hours=4), "P12DT4H"),
+            (td(days=7), "P7D"),
+            (td(seconds=30), "PT30S"),
+            (td(minutes=2, seconds=3), "PT2M3S"),
+            (td(microseconds=1), "PT0.000001S"),
+            (td(days=-2, seconds=3, microseconds=400500), "-P1DT23H59M56.5995S"),
+        ]
+
+        for value, expected in cases:
+            with self.subTest(value=value):
+                self.assertEqual(value.isoformat(), expected)
+
+    def test_fromisoformat(self):
+        td = self.theclass
+
+        cases = [
+            ("PT0S", td()),
+            ("P2DT10H", td(days=2, hours=10)),
+            ("P1W", td(weeks=1)),
+            ("PT1.5S", td(seconds=1, microseconds=500000)),
+            ("PT1,000001S", td(seconds=1, microseconds=1)),
+            ("-P2DT3.004005S", -td(days=2, seconds=3, microseconds=4005)),
+            ("+PT36H", td(hours=36)),
+        ]
+
+        for input_str, expected in cases:
+            with self.subTest(input_str=input_str):
+                self.assertEqual(td.fromisoformat(input_str), expected)
+
+        for value in (
+            td(),
+            td(days=5),
+            td(minutes=2, seconds=3),
+            td(days=-3, seconds=4, microseconds=5),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(td.fromisoformat(value.isoformat()), value)
+
+    def test_fromisoformat_subclass(self):
+        tds = SubclassTimeDelta.fromisoformat("P2DT10H")
+        self.assertIs(type(tds), SubclassTimeDelta)
+        self.assertEqual(tds, timedelta(days=2, hours=10))
+
+    def test_fromisoformat_fails(self):
+        for bad_str in [
+            "",
+            "P",
+            "PT",
+            "1D",
+            "P1Y",
+            "P1M",
+            "P1DT",
+            "P1W2D",
+            "P1WT1S",
+            "PT1H2D",
+            "P1.5D",
+            "PT1.1234567S",
+            "PT1S1M",
+            "PT1S.",
+        ]:
+            with self.subTest(bad_str=bad_str):
+                self.assertRaises(ValueError, self.theclass.fromisoformat, bad_str)
+
+    def test_fromisoformat_fails_typeerror(self):
+        for bad_type in [b"PT1S", None, 3600]:
+            with self.subTest(bad_type=bad_type):
+                self.assertRaises(TypeError, self.theclass.fromisoformat, bad_type)
+
     def test_carries(self):
         t1 = timedelta(days=100,
                        weeks=-7,

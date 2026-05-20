@@ -355,6 +355,110 @@ def _find_isoformat_datetime_separator(dtstr):
             return 8
 
 
+def _parse_isoformat_timedelta(tdstr):
+    if not tdstr:
+        raise ValueError("Invalid ISO string")
+
+    idx = 0
+    sign = 1
+    if tdstr[idx] in "+-":
+        sign = -1 if tdstr[idx] == "-" else 1
+        idx += 1
+
+    if idx >= len(tdstr) or tdstr[idx] != "P":
+        raise ValueError("Invalid ISO string")
+    idx += 1
+
+    if idx >= len(tdstr):
+        raise ValueError("Invalid ISO string")
+
+    weeks = days = hours = minutes = seconds = microseconds = 0
+    in_time = False
+    saw_component = False
+    saw_time_component = False
+    saw_weeks = False
+    seen_units = set()
+    last_rank = -1
+
+    while idx < len(tdstr):
+        if tdstr[idx] == "T":
+            if in_time or saw_weeks or idx + 1 >= len(tdstr):
+                raise ValueError("Invalid ISO string")
+            in_time = True
+            idx += 1
+            continue
+
+        start = idx
+        while idx < len(tdstr) and _is_ascii_digit(tdstr[idx]):
+            idx += 1
+        if start == idx:
+            raise ValueError("Invalid ISO string")
+
+        fraction = None
+        if idx < len(tdstr) and tdstr[idx] in ".,":  # decimal separator
+            idx += 1
+            fraction_start = idx
+            while idx < len(tdstr) and _is_ascii_digit(tdstr[idx]):
+                idx += 1
+            if fraction_start == idx:
+                raise ValueError("Invalid ISO string")
+            fraction = tdstr[fraction_start:idx]
+
+        if idx >= len(tdstr):
+            raise ValueError("Invalid ISO string")
+
+        value = int(tdstr[start:idx - (len(fraction) + 1 if fraction else 0)])
+        designator = tdstr[idx]
+        idx += 1
+
+        if designator in seen_units:
+            raise ValueError("Invalid ISO string")
+        seen_units.add(designator)
+
+        rank = {"W": 0, "D": 1, "H": 2, "M": 3, "S": 4}.get(designator)
+        if rank is None or rank <= last_rank:
+            raise ValueError("Invalid ISO string")
+        last_rank = rank
+
+        if designator == "W":
+            if in_time or saw_component or fraction is not None or idx != len(tdstr):
+                raise ValueError("Invalid ISO string")
+            weeks = value
+            saw_weeks = True
+        elif designator == "D":
+            if in_time or fraction is not None or saw_weeks:
+                raise ValueError("Invalid ISO string")
+            days = value
+        elif designator == "H":
+            if not in_time or fraction is not None:
+                raise ValueError("Invalid ISO string")
+            hours = value
+            saw_time_component = True
+        elif designator == "M":
+            if not in_time or fraction is not None:
+                raise ValueError("Invalid ISO string")
+            minutes = value
+            saw_time_component = True
+        elif designator == "S":
+            if not in_time:
+                raise ValueError("Invalid ISO string")
+            seconds = value
+            if fraction is not None:
+                if len(fraction) > 6:
+                    raise ValueError("Invalid ISO string")
+                microseconds = int(fraction.ljust(6, "0"))
+            saw_time_component = True
+        else:
+            raise ValueError("Invalid ISO string")
+
+        saw_component = True
+
+    if not saw_component or (in_time and not saw_time_component):
+        raise ValueError("Invalid ISO string")
+
+    return sign, weeks, days, hours, minutes, seconds, microseconds
+
+
 def _parse_isoformat_date(dtstr):
     # It is assumed that this is an ASCII-only string of lengths 7, 8 or 10,
     # see the comment on Modules/_datetimemodule.c:_find_isoformat_datetime_separator
@@ -786,6 +890,53 @@ class timedelta:
         """Total seconds in the duration."""
         return ((self.days * 86400 + self.seconds) * 10**6 +
                 self.microseconds) / 10**6
+
+    def isoformat(self):
+        total = self
+        sign = ""
+        if total.days < 0:
+            sign = "-"
+            total = -total
+
+        parts = [sign, "P"]
+        if total.days:
+            parts.extend((str(total.days), "D"))
+
+        mm, ss = divmod(total.seconds, 60)
+        hh, mm = divmod(mm, 60)
+        time_parts = []
+        if hh:
+            time_parts.extend((str(hh), "H"))
+        if mm:
+            time_parts.extend((str(mm), "M"))
+        if total.microseconds:
+            time_parts.extend((f"{ss}.{total.microseconds:06d}".rstrip("0"), "S"))
+        elif ss or not total.days and not time_parts:
+            time_parts.extend((str(ss), "S"))
+
+        if time_parts:
+            parts.append("T")
+            parts.extend(time_parts)
+
+        return "".join(parts)
+
+    @classmethod
+    def fromisoformat(cls, date_string):
+        if not isinstance(date_string, str):
+            raise TypeError("fromisoformat: argument must be str")
+
+        try:
+            sign, weeks, days, hours, minutes, seconds, microseconds = (
+                _parse_isoformat_timedelta(date_string)
+            )
+            return cls(
+                days=sign * days,
+                seconds=sign * (seconds + minutes * 60 + hours * 3600),
+                microseconds=sign * microseconds,
+                weeks=sign * weeks,
+            )
+        except ValueError:
+            raise ValueError(f"Invalid isoformat string: {date_string!r}")
 
     # Read-only field accessors
     @property

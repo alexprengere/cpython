@@ -285,6 +285,30 @@ A :class:`timedelta` object represents a duration, the difference between two
       '-(1:00:00)'
 
 
+Alternate constructors:
+
+.. classmethod:: timedelta.fromisoformat(duration_string)
+
+   Return a :class:`timedelta` corresponding to an ISO 8601 duration string.
+
+   This parser supports the subset of ISO 8601 durations that can be represented
+   exactly by :class:`timedelta`: weeks, days, hours, minutes, seconds, and
+   fractional seconds. Durations that use years or months are not supported.
+   When weeks are used, they must be the only duration component.
+
+   Examples::
+
+      >>> import datetime as dt
+      >>> dt.timedelta.fromisoformat('P2DT10H')
+      datetime.timedelta(days=2, seconds=36000)
+      >>> dt.timedelta.fromisoformat('PT1.5S')
+      datetime.timedelta(seconds=1, microseconds=500000)
+      >>> dt.timedelta.fromisoformat('-P1W')
+      datetime.timedelta(days=-7)
+
+   .. versionadded:: 3.16
+
+
 Class attributes:
 
 .. attribute:: timedelta.min
@@ -448,6 +472,24 @@ In Boolean contexts, a :class:`timedelta` object is
 considered to be true if and only if it isn't equal to ``timedelta(0)``.
 
 Instance methods:
+
+.. method:: timedelta.isoformat()
+
+   Return a string representing the duration in ISO 8601 format. The result
+   uses a sign when needed and only emits units representable by
+   :class:`timedelta`.
+
+   Examples::
+
+      >>> import datetime as dt
+      >>> dt.timedelta(days=12, hours=4).isoformat()
+      'P12DT4H'
+      >>> dt.timedelta(microseconds=1).isoformat()
+      'PT0.000001S'
+      >>> dt.timedelta(days=-2, seconds=3).isoformat()
+      '-P1DT23H59M57S'
+
+   .. versionadded:: 3.16
 
 .. method:: timedelta.total_seconds()
 
